@@ -1,0 +1,183 @@
+#!fsharp
+
+// https://github.com/dotnet/machinelearning-samples
+
+#r "nuget: Microsoft.ML"
+#r "nuget: Microsoft.ML.FastTree"
+
+open System
+open System.IO
+open Microsoft.ML
+open Microsoft.ML.Data
+
+#!fsharp
+
+open Microsoft.ML.Data
+
+/// Type representing the text to run sentiment analysis on.
+[<CLIMutable>] 
+type SentimentIssue = 
+    { 
+        [<LoadColumn(0)>]
+        Label : bool
+
+        [<LoadColumn(2)>]
+        Text : string 
+    }
+
+/// Result of sentiment prediction.
+[<CLIMutable>]
+type  SentimentPrediction = 
+    { 
+        // ColumnName attribute is used to change the column name from
+        // its default value, which is the name of the field.
+        [<ColumnName("PredictedLabel")>]
+        Prediction : bool; 
+
+        // No need to specify ColumnName attribute, because the field
+        // name "Probability" is the column name we want.
+        Probability : float32; 
+
+        Score : float32 
+    }
+
+#!fsharp
+
+let consoleWriteHeader line =
+    let defaultColor = Console.ForegroundColor
+    Console.ForegroundColor <- ConsoleColor.Yellow
+    printfn " "
+    printfn "%s" line
+    let maxLength = line.Length
+    printfn "%s" (new string('#', maxLength))
+    Console.ForegroundColor <- defaultColor
+
+let printBinaryClassificationMetrics name (metrics : CalibratedBinaryClassificationMetrics) =
+    printfn"************************************************************"
+    printfn"*       Metrics for %s binary classification model      " name
+    printfn"*-----------------------------------------------------------"
+    printfn"*       Accuracy: %.2f%%" (metrics.Accuracy * 100.)
+    printfn"*       Area Under Curve:      %.2f%%" (metrics.AreaUnderRocCurve * 100.)
+    printfn"*       Area under Precision recall Curve:    %.2f%%" (metrics.AreaUnderPrecisionRecallCurve * 100.)
+    printfn"*       F1Score:  %.2f%%" (metrics.F1Score * 100.)
+
+    printfn"*       LogLogg:  %.2f%%" (metrics.LogLoss)
+    printfn"*       LogLossreduction:  %.2f%%" (metrics.LogLossReduction)
+    printfn"*       PositivePrecision:      %.2f" (metrics.PositivePrecision)
+    printfn"*       PositiveRecall:      %.2f" (metrics.PositiveRecall)
+    printfn"*       NegativePrecision:      %.2f" (metrics.NegativePrecision)
+    printfn"*       NegativeRecall:      %.2f" (metrics.NegativeRecall)
+
+let peekDataViewInConsole<'TObservation when 'TObservation : (new : unit -> 'TObservation) and 'TObservation : not struct> (mlContext : MLContext) (dataView : IDataView) (pipeline : IEstimator<ITransformer>) numberOfRows =
+
+    let msg = sprintf "Peek data in DataView: Showing %d rows with the columns" numberOfRows
+    consoleWriteHeader msg
+
+    //https://github.com/dotnet/machinelearning/blob/main/docs/code/MlNetCookBook.md#how-do-i-look-at-the-intermediate-data
+    let transformer = pipeline.Fit dataView
+    let transformedData = transformer.Transform dataView
+
+    // 'transformedData' is a 'promise' of data, lazy-loading. call Preview
+    //and iterate through the returned collection from preview.
+
+    transformedData.Preview(numberOfRows).RowView
+    |> Seq.iter
+        (fun row ->
+            row.Values
+            |> Array.map (function KeyValue(k,v) -> sprintf "| %s:%O" k v)
+            |> Array.fold (+) "Row--> "
+            |> printfn "%s\n"
+        )
+
+#!fsharp
+
+let appPath = __SOURCE_DIRECTORY__
+
+
+let baseDatasetsLocation = @"../../../../Data"
+let dataPath = sprintf @"%s/wikiDetoxAnnotated40kRows.tsv" (Path.Combine(__SOURCE_DIRECTORY__, "Data"))
+
+let baseModelsPath = @"../../../../MLModels";
+let modelPath = sprintf @"%s/SentimentModel.zip" baseModelsPath
+
+let absolutePath relativePath = 
+    let dataRoot = FileInfo(Reflection.Assembly.GetExecutingAssembly().Location)
+    Path.Combine(dataRoot.Directory.FullName, relativePath)
+
+#!fsharp
+
+let dataPath = Path.Combine(__SOURCE_DIRECTORY__, "Data") + "\wikiDetoxAnnotated40kRows.tsv"
+let modelPath = Path.Combine(__SOURCE_DIRECTORY__, "MLModels") + "\SentimentModel.zip"
+
+#!fsharp
+
+let buildTrainEvaluateAndSaveModel (mlContext : MLContext) =
+    // STEP 1: Common data loading configuration
+    let dataView = mlContext.Data.LoadFromTextFile<SentimentIssue>(dataPath, hasHeader = true)
+    
+    let trainTestSplit = mlContext.Data.TrainTestSplit(dataView, testFraction=0.2)
+    let trainingDataView = trainTestSplit.TrainSet
+    let testDataView = trainTestSplit.TestSet
+
+    // STEP 2: Common data process configuration with pipeline data transformations          
+    let dataProcessPipeline = mlContext.Transforms.Text.FeaturizeText("Features", "Text")
+
+    // (OPTIONAL) Peek data (such as 2 records) in training DataView after applying the ProcessPipeline's transformations into "Features" 
+    peekDataViewInConsole<SentimentIssue> mlContext trainingDataView dataProcessPipeline 2 |> ignore
+
+    // STEP 3: Set the training algorithm, then create and config the modelBuilder                            
+    let trainer = mlContext.BinaryClassification.Trainers.FastTree(labelColumnName = "Label", featureColumnName = "Features")
+    let trainingPipeline = dataProcessPipeline.Append(trainer)
+    
+    // STEP 4: Train the model fitting to the DataSet
+    printfn "=============== Training the model ==============="
+    let trainedModel = trainingPipeline.Fit(trainingDataView)
+    
+    // STEP 5: Evaluate the model and show accuracy stats
+    printfn "===== Evaluating Model's accuracy with Test data ====="
+    let predictions = trainedModel.Transform testDataView
+    let metrics = mlContext.BinaryClassification.Evaluate(predictions, "Label", "Score")
+
+    printBinaryClassificationMetrics (trainer.ToString()) metrics
+
+    // STEP 6: Save/persist the trained model to a .ZIP file
+    use fs = new FileStream(modelPath, FileMode.Create, FileAccess.Write, FileShare.Write)
+    mlContext.Model.Save(trainedModel, trainingDataView.Schema, fs)
+
+    printfn "The model is saved to %s" modelPath
+
+#!fsharp
+
+// (OPTIONAL) Try/test a single prediction by loding the model from the file, first.
+let testSinglePrediction (mlContext : MLContext) (text : string) =
+    let sampleStatement = { Label = false; Text = text; }
+    
+    use stream = new FileStream(modelPath, FileMode.Open, FileAccess.Read, FileShare.Read)
+    let trainedModel,inputSchema = mlContext.Model.Load(stream)
+    
+    // Create prediction engine related to the loaded trained model
+    let predEngine= mlContext.Model.CreatePredictionEngine<SentimentIssue, SentimentPrediction>(trainedModel)
+
+    //Score
+    let resultprediction = predEngine.Predict(sampleStatement)
+
+
+    printfn "=============== Single Prediction  ==============="
+    printfn 
+        "Text: %s | Prediction: %s sentiment | Probability: %f"
+        sampleStatement.Text
+        (if Convert.ToBoolean(resultprediction.Prediction) then "Negative" else "Positive")
+        resultprediction.Probability
+    printfn "=================================================="
+
+#!fsharp
+
+let mlContext = MLContext(seed = Nullable 1)
+
+buildTrainEvaluateAndSaveModel mlContext
+
+#!fsharp
+
+// testSinglePrediction mlContext "This is a very rude movie"
+
+testSinglePrediction mlContext "This is a very good school"
