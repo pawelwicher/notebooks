@@ -1,0 +1,137 @@
+#!fsharp
+
+#r "nuget: Microsoft.ML"
+
+open Microsoft.ML
+open Microsoft.ML.Data
+open Microsoft.ML.Trainers
+open Microsoft.ML.Transforms.Text
+
+#!fsharp
+
+[<CLIMutable>]
+type SentimentData =
+    {
+        [<LoadColumn(0)>]
+        SentimentText : string
+
+        [<LoadColumn(1); ColumnName("Label")>]
+        Sentiment : bool
+    }
+
+[<CLIMutable>]
+type SentimentPrediction =
+    {
+        [<ColumnName("PredictedLabel")>]
+        Prediction : bool
+
+        Probability : single
+
+        Score : single
+    }
+
+#!fsharp
+
+let dataPath = Path.Combine(__SOURCE_DIRECTORY__, "Data\yelp_labelled.txt")
+
+#!fsharp
+
+let LoadData (mlContext : MLContext) =
+    let dataView = mlContext.Data.LoadFromTextFile<SentimentData>(dataPath, hasHeader = false)
+    let splitDataView = mlContext.Data.TrainTestSplit(dataView, testFraction = 0.2)
+    splitDataView
+
+let BuildAndTrainModel (mlContext : MLContext, splitTrainSet : IDataView) =
+    let estimator =
+        mlContext.Transforms.Text
+            .FeaturizeText(
+                outputColumnName = "Features",
+                inputColumnName = "SentimentText")
+            .Append(
+                mlContext.BinaryClassification.Trainers.SdcaLogisticRegression(
+                    labelColumnName = "Label",
+                    featureColumnName = "Features"))
+
+    Console.WriteLine("=============== Create and Train the Model ===============")
+    let model = estimator.Fit(splitTrainSet)
+    Console.WriteLine("=============== End of training ===============")
+    Console.WriteLine()
+    model
+
+let Evaluate (mlContext : MLContext, model : ITransformer, splitTestSet : IDataView) =
+    Console.WriteLine("=============== Evaluating Model accuracy with Test data===============")
+
+    let predictions = model.Transform(splitTestSet)
+    let metrics = mlContext.BinaryClassification.Evaluate(predictions, "Label")
+
+    Console.WriteLine();
+    Console.WriteLine("Model quality metrics evaluation")
+    Console.WriteLine("--------------------------------")
+    Console.WriteLine($"Accuracy: {metrics.Accuracy:P2}")
+    Console.WriteLine($"Auc: {metrics.AreaUnderRocCurve:P2}")
+    Console.WriteLine($"F1Score: {metrics.F1Score:P2}")
+    Console.WriteLine("=============== End of model evaluation ===============")
+        
+
+let UseModelWithSingleItem (mlContext : MLContext, model : ITransformer) =
+    let predictionFunction = mlContext.Model.CreatePredictionEngine<SentimentData, SentimentPrediction>(model)
+    let sampleStatement =
+        {
+            SentimentText = "This was a very bad steak"
+            Sentiment = false
+        }
+
+    let resultPrediction = predictionFunction.Predict(sampleStatement)
+
+    Console.WriteLine()
+    Console.WriteLine("=============== Prediction Test of model with a single sample and test dataset ===============")
+
+    Console.WriteLine()
+    Console.WriteLine($"""Sentiment: {sampleStatement.SentimentText} | Prediction: {if Convert.ToBoolean(resultPrediction.Prediction) then "Positive" else "Negative"} | Probability: {resultPrediction.Probability}""")
+
+    Console.WriteLine("=============== End of Predictions ===============")
+    Console.WriteLine()
+
+let UseModelWithBatchItems (mlContext : MLContext, model : ITransformer) =
+    let sentiments = seq {
+        yield
+            {
+                SentimentText = "This was a horrible meal"
+                Sentiment = false
+            }
+        yield
+            {
+                SentimentText = "I love this spaghetti."
+                Sentiment = false
+            }
+    }
+
+    let batchComments = mlContext.Data.LoadFromEnumerable(sentiments)
+
+    let predictions = model.Transform(batchComments)
+
+    let predictedResults = mlContext.Data.CreateEnumerable<SentimentPrediction>(predictions, reuseRowObject = false)
+
+    Console.WriteLine()
+
+    Console.WriteLine("=============== Prediction Test of loaded model with multiple samples ===============")
+
+    Console.WriteLine()
+
+    for (sentiment, prediction) in Seq.zip sentiments predictedResults do
+        Console.WriteLine($"""Sentiment: {sentiment.SentimentText} | Prediction: {if Convert.ToBoolean(prediction.Prediction) then "Positive" else "Negative"} | Probability: {prediction.Probability}""")
+    
+    Console.WriteLine("=============== End of predictions ===============")
+
+#!fsharp
+
+let mlContext = MLContext()
+let splitDataView = LoadData(mlContext)
+let model = BuildAndTrainModel(mlContext, splitDataView.TrainSet)
+
+Evaluate(mlContext, model, splitDataView.TestSet)
+UseModelWithSingleItem(mlContext, model)
+UseModelWithBatchItems(mlContext, model)
+
+Console.WriteLine()
+Console.WriteLine("=============== End of process ===============")
