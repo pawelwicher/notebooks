@@ -1,0 +1,5 @@
+#!fsharp
+
+let x = 2
+
+pown x 10
