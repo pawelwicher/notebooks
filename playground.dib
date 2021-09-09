@@ -1,5 +1,246 @@
+#!markdown
+
+# Playground
+
 #!fsharp
 
 let x = 2
 
-pown x 10
+let a = pown x 10
+
+a :: [0]
+
+#!html
+
+<p style="color: red;">hello</p>
+
+#!javascript
+
+console.log(2 ** 10);
+const arr = [1,2,3,4,5].map(x => x + 1);
+console.log(arr);
+
+#!fsharp
+
+let getLastSundayDate year month =
+    let lastDayOfMonth = DateTime(year, month, 1).AddMonths(1).AddDays(-1.0)
+    let wantedDay = int DayOfWeek.Sunday;
+    let lastDay = int lastDayOfMonth.DayOfWeek;
+    lastDayOfMonth.AddDays(float (if lastDay >= wantedDay then wantedDay - lastDay else wantedDay - lastDay - 7))
+
+let winterTimeChangeDate = getLastSundayDate 2021 10
+Console.WriteLine(winterTimeChangeDate)
+
+let getHeader ((interval, dateUtc) : (int * DateTime)) =
+    let dateLocal = dateUtc.ToLocalTime()
+    let winterTimeChangeDate = getLastSundayDate dateLocal.Year 10
+    let summerTimeChangeDate = getLastSundayDate dateLocal.Year 3
+    if dateLocal.Date = winterTimeChangeDate && (dateUtc.Hour = 1 && dateUtc.Minute > 0 || dateUtc.Hour = 2 && dateUtc.Minute = 0) then
+        dateLocal.ToString("HH:mmA")
+    elif dateLocal.Date = winterTimeChangeDate && dateUtc.Hour = 1 && dateUtc.Minute = 0 then
+        "03:00"
+    elif dateLocal.Date = summerTimeChangeDate && dateUtc.Hour = 1 && dateUtc.Minute = 0 then
+        "02:00"
+    else
+        dateLocal.ToString("HH:mm")
+
+let startDate = DateTime(2021, 10, 31).ToUniversalTime()
+let endDate = DateTime(2021, 11, 01).ToUniversalTime()
+// let startDate = DateTime(2021, 11, 01).ToUniversalTime()
+// let endDate = DateTime(2021, 11, 02).ToUniversalTime()
+// let startDate = DateTime(2021, 03, 28).ToUniversalTime()
+// let endDate = DateTime(2021, 03, 29).ToUniversalTime()
+
+let Five = 5
+let Quarter = 15
+let Hour = 60
+let Day = 1440
+
+let systemIntervals = [15; 60; 1440]
+
+let getIntervals (startDateUtc : DateTime) (endDateUtc : DateTime) =
+    let includeFive = systemIntervals |> List.contains Five
+    let includeQuarter = systemIntervals |> List.contains Quarter
+    let includeHour = systemIntervals |> List.contains Hour
+    let includeDay = systemIntervals |> List.contains Day
+
+    let fiveOffset = if includeFive then 3 else 0
+    let quarterOffset = if includeQuarter then 4 else 0
+    let hourOffset = if includeHour then 1 else 0
+
+    seq {
+        let mutable dateUtc = startDateUtc.AddMinutes(float Five)
+        let mutable hourCount = 0
+        while dateUtc <= endDateUtc do
+            let dateLocal = dateUtc.ToLocalTime()
+
+            if dateLocal.Minute = 0 then
+                hourCount <- hourCount + 1
+
+            if includeFive then
+                yield Five, dateUtc, 0
+
+            if includeQuarter && (dateLocal.Minute = 15 || dateLocal.Minute = 30 || dateLocal.Minute = 45 || dateLocal.Minute = 0) then
+                yield Quarter, dateUtc, fiveOffset
+
+            if includeHour && dateLocal.Minute = 0 then
+                yield Hour, dateUtc, (fiveOffset * 4 + quarterOffset)
+
+            if includeDay && dateLocal.Hour = 0 && dateLocal.Minute = 0 then
+                yield Day, dateUtc, (fiveOffset * 4 + quarterOffset + hourOffset) * hourCount
+                hourCount <- 0
+
+            dateUtc <- dateUtc.AddMinutes(float Five)
+    }
+
+let intervals = getIntervals startDate endDate
+
+Console.WriteLine(intervals |> Seq.length)
+
+// 00:15	00:30	00:45	01:00	01:00
+// 01:15	01:30	01:45	02:00	02:00
+// 02:15	02:30	02:45	03:00	03:00
+// 02:15A	02:30A	02:45A	03:00A	03:00A
+// 03:15	03:30	03:45	04:00	04:00
+
+intervals
+|> Seq.map (fun (i, d, count) -> i, (getHeader (i, d)), count)
+|> Seq.map (fun (i, text, count) -> sprintf "[%i %s %i]" i text count)
+|> String.concat " "
+
+#!fsharp
+
+open System
+open System.Linq
+open System.Text.RegularExpressions
+open System.IO
+
+let inputDir = @"C:\DEV\Git\SPR\spr-backend"
+let outputDir = @"C:\DEV\Git\SPR"
+let files = Directory.GetFiles(inputDir, "*Map.cs", SearchOption.AllDirectories)
+let getModelAndTableName file =
+    let fileContent = File.ReadAllText file
+    let find regex = Regex.Match(fileContent, regex).Groups.[1].Value
+    let modelName = find "ClassMap<(\w+)>"
+    let tableName = find "Table\(\"(\w+)\"\)"
+    let tableName =
+        if String.IsNullOrEmpty tableName then 
+            find " TableName = \"(\w+)\";"
+        else
+            tableName
+    (modelName, tableName)
+
+let data = 
+    files
+    |> Seq.map getModelAndTableName
+    |> Seq.filter (fun (model, table) -> not (String.IsNullOrEmpty model || String.IsNullOrEmpty table))
+    |> Seq.map (fun (model, table) -> $"select '{model}' as model_name, '{table}' as table_name from dual ")
+    |> Array.ofSeq
+    |> String.concat "union\n"
+
+File.WriteAllText(Path.Combine(outputDir, "foo.txt"), data)
+
+#!fsharp
+
+#r "nuget: Oracle.EntityFrameworkCore"
+
+open System
+open System.ComponentModel.DataAnnotations.Schema
+open Microsoft.EntityFrameworkCore
+open Microsoft.Extensions.Configuration
+
+let connectionString = "Data Source=(DESCRIPTION = (ADDRESS = (PROTOCOL = TCP)(HOST = localhost)(PORT = 1521))(CONNECT_DATA = (SERVER = DEDICATED)(SERVICE_NAME = XE)));User ID=spr;Password=spr;"
+
+[<CLIMutable>]
+[<Table("OBJ_RANKING")>]
+type Ranking = { 
+      ID : int
+      CODE : string
+    }
+
+type ObjDbContext() =
+    inherit DbContext()
+
+    [<DefaultValue>] val mutable rankings : DbSet<Ranking>    
+    member this.Rankings with get() = this.rankings and set v = this.rankings <- v
+
+    override this.OnConfiguring optionsBuilder =        
+        optionsBuilder.UseOracle(connectionString) |> ignore
+
+let ctx = new ObjDbContext()
+
+let result = query {
+    for r in ctx.Rankings do
+    select r.CODE
+    take 10
+}
+
+result
+
+#!fsharp
+
+#r "nuget: FSharp.Data, 4.1.1"
+
+open System
+open FSharp.Data
+
+let query = "{ \"query\": \"{ continents { name } }\" }"
+let result = Http.RequestString
+              (
+                url = "https://countries.trevorblades.com",
+                httpMethod = "POST",
+                headers = [ HttpRequestHeaders.ContentType "application/json" ],
+                body = TextRequest query
+              )
+printfn $"Query: {query}\nResult: {result}"
+
+#!csharp
+
+string Test(ReadOnlySpan<char> span) {
+    var buffer = new Span<char>(new char[1]);
+    span[.. 1].ToLower(buffer, System.Globalization.CultureInfo.CurrentCulture);
+    return string.Concat(buffer, span[1 ..]);
+}
+
+var x = Test("SomeProp");
+x
+
+#!fsharp
+
+open System
+
+type RoundingWorkflow(sigDigs : int) =
+    let round (x : float) = Math.Round(float x, sigDigs)
+
+    member this.Bind (result : float, rest : float -> float) =
+        let result' = round result
+        rest result'
+
+    member this.Return (x : float) : float =
+        round x
+
+let withPrecision sigDigs = RoundingWorkflow(sigDigs)
+
+let test =
+    withPrecision 3 {
+      let! x = 1.0 / 3.0
+      return x
+    }
+
+test
+
+#!fsharp
+
+let isPrime n =
+    match n with
+    | 1 -> false
+    | 2 -> true
+    | _ when n % 2 = 0 || [3 .. 2 .. int (sqrt (float n)) + 1] |> Seq.exists (fun x -> n % x = 0) -> false
+    | _ -> true
+
+let prime n =
+    Seq.initInfinite ((+) 1) |> Seq.filter isPrime |> Seq.item (n - 1)
+
+let p = prime 10001
+
+p
