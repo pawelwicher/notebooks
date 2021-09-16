@@ -4,6 +4,29 @@
 
 #!fsharp
 
+let startDate = DateTime(2020, 1, 1)
+let endDate = DateTime(2020, 1, 2)
+
+let intervals = [60]
+
+let foo = seq {
+    let mutable date = startDate.AddMinutes(float 5)
+    while date <= endDate do
+        for v in intervals |> Seq.filter (fun x -> int (date - startDate).TotalMinutes % x = 0) do
+            yield v
+        date <- date.AddMinutes(float 5)
+}
+
+let getGroupingOffset interval =
+    intervals |> Seq.filter (fun x -> x < interval) |> Seq.map (fun x -> interval / x) |> Seq.sum
+
+let groupingOffsets =
+    intervals |> Seq.map (fun x -> (x, getGroupingOffset x)) |> Map.ofSeq
+
+foo
+
+#!fsharp
+
 let x = 2
 
 let a = pown x 10
