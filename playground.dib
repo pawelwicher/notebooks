@@ -1,3 +1,63 @@
+#!fsharp
+
+#r "nuget: GrapeCity.Documents.Excel"
+
+open System
+open System.IO
+open GrapeCity.Documents.Excel
+
+#!fsharp
+
+type MyFunction() =
+    inherit CustomFunction("DANE", FunctionValueType.Number, [|Parameter(FunctionValueType.Object, true)|])
+
+    override this.Evaluate (arguments : obj[], context : ICalcContext) =
+        let calcReference = arguments |> Seq.head :?> CalcReference
+        let range = calcReference.GetRanges() |> Seq.head
+        let value = range.Value |> Convert.ToDecimal
+        (value * value) |> box
+
+Workbook.AddCustomFunction(MyFunction())
+
+#!fsharp
+
+let workbook = Workbook()
+let json = File.ReadAllText(@"C:\Users\ca190\Desktop\report.ssjson")
+
+workbook.FromJson(json)
+
+let worksheet = workbook.Worksheets[0]
+
+for i in 0 .. 4 do
+    $"{worksheet.Cells[i, 0].Value}, {worksheet.Cells[i, 1].Formula}, {worksheet.Cells[i, 1].Value}" |> Console.WriteLine
+
+#!fsharp
+
+for i in 0 .. 4 do
+    let value = worksheet.Cells[i, 1].Value
+    worksheet.Cells[i, 1].Formula <- null
+    worksheet.Cells[i, 1].Value <- value
+
+workbook.Save(@"C:\Users\ca190\Desktop\report.xlsx")
+
+#!csharp
+
+var parse = (string s) => int.Parse(s);
+
+var result = parse("123");
+
+result
+
+#!csharp
+
+string? s = "Hello";
+
+if (s is not null) {
+    s += " World!";
+}
+
+s
+
 #!markdown
 
 # Playground
@@ -12,7 +72,9 @@ type Foo() =
         a + b + c
 
 let foo = Foo()
-foo.Test (1, 2, 3)
+let result = foo.Test (1, 2, 3)
+
+$"{nameof(foo)}.{nameof(foo.Test)} = {result}" 
 
 #!fsharp
 
