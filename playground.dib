@@ -8,37 +8,79 @@ open GrapeCity.Documents.Excel
 
 #!fsharp
 
-type MyFunction() =
-    inherit CustomFunction("DANE", FunctionValueType.Number, [|Parameter(FunctionValueType.Object, true)|])
+type OS_CZASU_Function() =
+    inherit CustomFunction("OS_CZASU", FunctionValueType.Number, [||])
 
     override this.Evaluate (arguments : obj[], context : ICalcContext) =
         let calcReference = arguments |> Seq.head :?> CalcReference
         let range = calcReference.GetRanges() |> Seq.head
         let value = range.Value |> Convert.ToDecimal
-        (value * value) |> box
+        (0) |> box
 
-Workbook.AddCustomFunction(MyFunction())
+type DANE_Function() =
+    inherit CustomFunction("DANE", FunctionValueType.Object, [|Parameter(FunctionValueType.Object, true); Parameter(FunctionValueType.Object, true)|])
+
+    override this.Evaluate (arguments : obj[], context : ICalcContext) =
+        let calcReference = arguments[1] :?> CalcReference
+        let range = calcReference.GetRanges() |> Seq.head
+        let value = range.Value |> Convert.ToDecimal
+        (value * 100m) |> box
+
+Workbook.AddCustomFunction(OS_CZASU_Function())
+Workbook.AddCustomFunction(DANE_Function())
 
 #!fsharp
 
 let workbook = Workbook()
-let json = File.ReadAllText(@"C:\Users\ca190\Desktop\report.ssjson")
-
+let json = File.ReadAllText(@"C:\Users\ca190\Desktop\report_template.ssjson")
 workbook.FromJson(json)
 
 let worksheet = workbook.Worksheets[0]
 
-for i in 0 .. 4 do
-    $"{worksheet.Cells[i, 0].Value}, {worksheet.Cells[i, 1].Formula}, {worksheet.Cells[i, 1].Value}" |> Console.WriteLine
+let pasteOption = PasteOption()
+pasteOption.PasteType <- PasteType.Values ||| PasteType.Formats ||| PasteType.ColumnWidths ||| PasteType.Formulas
 
-#!fsharp
+let getRowCol address =
+    let row = worksheet.Range[address].Row
+    let col = worksheet.Range[address].Column
+    (row, col)
 
-for i in 0 .. 4 do
-    let value = worksheet.Cells[i, 1].Value
-    worksheet.Cells[i, 1].Formula <- null
-    worksheet.Cells[i, 1].Value <- value
+let timeline address =
+    let row, col = getRowCol address
 
-workbook.Save(@"C:\Users\ca190\Desktop\report.xlsx")
+    worksheet.Cells[row, col].Value <- 1
+
+    for i in 1 .. 9 do
+        worksheet.Cells[row, col + i - 1].Copy(worksheet.Cells[row, col + i], pasteOption)
+        worksheet.Cells[row, col + i].Value <- i + 1
+
+let expandCell address =
+    let row, col = getRowCol address
+
+    for i in 1 .. 9 do
+        worksheet.Cells[row, col + i - 1].Copy(worksheet.Cells[row, col + i], pasteOption)
+
+let expandCustomCell address =
+    let row, col = getRowCol address
+
+    for i in 1 .. 9 do
+        worksheet.Cells[row, col + i - 1].Copy(worksheet.Cells[row, col + i], pasteOption)
+
+    worksheet.Cells[row, col].Value <- worksheet.Cells[row, col].Value
+
+    for i in 1 .. 9 do
+        worksheet.Cells[row, col + i].Value <- worksheet.Cells[row, col + i].Value    
+
+expandCell "E7"
+timeline "E9"
+expandCustomCell "E10"
+expandCustomCell "E11"
+expandCustomCell "E12"
+expandCustomCell "E13"
+expandCustomCell "E14"
+expandCustomCell "E15"
+
+workbook.Save(@"C:\Users\ca190\Desktop\report.xlsx")    
 
 #!csharp
 
