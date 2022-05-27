@@ -1,3 +1,7 @@
+#!markdown
+
+# Playground
+
 #!fsharp
 
 #r "nuget: GrapeCity.Documents.Excel"
@@ -99,10 +103,6 @@ if (s is not null) {
 }
 
 s
-
-#!markdown
-
-# Playground
 
 #!fsharp
 
